@@ -42,7 +42,6 @@ float* temps;                             // actual temperature measurements
 float* temp_readings;                     // buffer to calculate averages of temp sensor readings  
 uint8_t n_accrued_temp_readings;          // number of readings placed into the readings buffer
 
-
 volatile bool flag_poll_thermistor;        // indicates whether the temperature sensors are due to be polled
 volatile bool flag_poll_snsr;
 IntervalTimer thermistor_poll_timer;
@@ -71,20 +70,19 @@ void setup() {
     setupTempSensors ();
     setupSensors     ();
 
+    // set onboard LED ON to indicate uC is running
+    if ( ENABLE_ONBOARD_LED ) { pinMode ( 13, OUTPUT ); digitalWrite ( 13, HIGH ); }
+
     // enable serial comms and initialise msg buffer / timing variables
-    if ( DISPLAY_SERIAL ) {
+    if ( ENABLE_SERIAL_OUTPUT ) {
         serial_display_delay_ms = 1000 / SERIAL_DISPLAY_FREQ;
         next_serial_display_time_ms = 0;
         Serial.begin ( SERIAL_BAUD );
         
-        delay ( 50 );
+        delay ( 100 );
         Serial.println ( "Serial enabled" );
     }
 
-    // set onboard LED ON to indicate uC is running
-    pinMode ( 13, OUTPUT ); digitalWrite ( 13, HIGH );
-    
-    
 }// setup ()
 
 //----------------------------      PROGRAM LOOP   ----------------------------//
@@ -114,12 +112,12 @@ void loop() {
     if ( poll_snsrs ) { handleSensorPolling (); }
 
     // SERIAL DISPLAY
-    if ( DISPLAY_SERIAL && cur_millis >= next_serial_display_time_ms ) {
-        
-        serialDisplay ();       // update next display time
-        next_serial_display_time_ms = cur_millis + serial_display_delay_ms;
+    if ( ENABLE_SERIAL_OUTPUT ) {
+        if ( cur_millis >= next_serial_display_time_ms ) {
+            serialDisplay ();
+            next_serial_display_time_ms = cur_millis + serial_display_delay_ms;
+        }
     }
-
 }// loop ()
 
 //----------------------------      FUNCTIONS   ----------------------------//

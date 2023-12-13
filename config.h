@@ -4,7 +4,7 @@
 
 // This must be enabled for serial communication with the uC
 // uC will not enable the serial terminal without 
-#define DISPLAY_SERIAL true
+#define ENABLE_SERIAL_OUTPUT true
 #define SERIAL_BAUD 115200
 #define SERIAL_DISPLAY_FREQ 4
 
@@ -15,8 +15,8 @@
 
 
 // this value should be greater than 5 to average out noisy readings
-#define N_THERMISTOR_POLLS 20              // number of voltage readings to average for calculating the temperature
-#define THERMISTOR_POLL_FREQ 60         // frequency at which CC system will take readings of temperature sensors
+#define N_THERMISTOR_POLLS 20       // number of voltage readings to average for calculating the temperature
+#define THERMISTOR_POLL_FREQ 60     // frequency at which CC system will take readings of temperature sensors
 
 // frequency to poll digital and analogue inputs
 #define SNSR_POLLING_FREQ 20
@@ -34,3 +34,5 @@ uint8_t TEMPCTL_POT_PIN = ANG_IN_PINS [ 0 ];
 
 
 
+//------------------------      MISC SETTINGS   --------------------------//
+#define ENABLE_ONBOARD_LED true
