@@ -24,6 +24,7 @@ SOFTWARE.
 */
 
 #include <Embedded_Template_Library.h>
+#include <etl/debounce.h>
 
 // Interrupts
 #include <avr/io.h>
@@ -32,11 +33,8 @@ SOFTWARE.
 // Teensy_PWM by Khoi Hoang
 #include <Teensy_PWM.h>
 
-#include "pins.h"
-#include "config.h"
-#include "orion_temp_sensor.h"
-#include "canbus.h"
-#include "fsm.h"
+// all local includes through the heder files
+#include "includes.h"
 
 //----------------------------    [  ONBOARD CONFIG VARS  ]   ----------------------------//
 
@@ -44,21 +42,6 @@ SOFTWARE.
 uint16_t _serial_display_delay_ms;              // time between sending serial messages (calculated at startup)
 uint32_t _next_serial_display_time_ms;          // time at which the next serial message is sent
 char* _serial_msg_bfr;                          // assign buffer on heap so that it isn't being re-allocated on the stack every call to serialDisplay ()
-
-// NTC 10K Sensors
-float* _temps;                             // actual temperature measurements
-float* _temp_readings;                     // buffer to calculate averages of temp sensor readings  
-uint8_t _n_accrued_temp_readings;          // number of readings placed into the readings buffer
-
-// Input buffers
-uint8_t*     _dig_readings;
-uint16_t* _ang_readings;
-
-// flags are set by the interval timers: flag indicates that the inputs should be polled and must be reset manually
-volatile bool _flag_poll_thermistor;
-volatile bool _flag_poll_snsr;
-IntervalTimer _thermistor_poll_timer;
-IntervalTimer _snsr_poll_timer;
 
 // CAN transceivers
 FlexCAN_T4 <CAN1, RX_SIZE_256, TX_SIZE_16> _can1;
@@ -79,15 +62,60 @@ Teensy_PWM* _hwpwm_sig [N_SIG_PWM];
 
 //----------------------------      CLIMATE CONTROL VARS   ----------------------------//
 
-// temp ranges
-/// @todo assign this memory as const and declare at compile time -> remove initTempRanges ()
-TempRange* _temp_range_batt;
-TempRange* _temp_range_res;
-TempRange* _temp_range_chgr;
+// NTC 10K Sensors
+float* _temps;                             // actual temperature measurements
+float* _temp_readings;                     // buffer to calculate averages of temp sensor readings  
+uint8_t _n_accrued_temp_readings;          // number of readings placed into the readings buffer
+
+// Input buffers
+uint8_t*  _dig_readings;
+uint16_t* _ang_readings;
+
+// flags are set by the interval timers: flag indicates that the inputs should be polled and must be reset manually
+volatile bool _flag_poll_thermistor;
+volatile bool _flag_poll_snsr;
+IntervalTimer _thermistor_poll_timer;
+IntervalTimer _snsr_poll_timer;
+
+/// @brief Temp ranges are tuneable in config.h
+const TempRange _temp_range_batt = {
+    SAFETY_TEMP_BATT_MIN_OK,
+    SAFETY_TEMP_BATT_MAX_OK,
+    SAFETY_TEMP_BATT_MIN_CRIT,
+    SAFETY_TEMP_BATT_MAX_CRIT
+};
+
+const TempRange _temp_range_res = {
+    SAFETY_TEMP_RES_MIN_OK,
+    SAFETY_TEMP_RES_MAX_OK,
+    SAFETY_TEMP_RES_MIN_CRIT,
+    SAFETY_TEMP_RES_MAX_CRIT
+};
+
+const TempRange _temp_range_chgr = {
+    SAFETY_TEMP_CHGR_MIN_OK,
+    SAFETY_TEMP_CHGR_MAX_OK,
+    SAFETY_TEMP_CHGR_MIN_CRIT,
+    SAFETY_TEMP_CHGR_MAX_CRIT
+};
 
 
 //---------------------------               FSM         --------------------------------//
 
+// button inputs for state machine
+
+#define _ac_button          _dig_readings [0] // assign AC      button to DIG 1
+#define _auto_button        _dig_readings [1] // assign AUTO    button to DIG 2
+#define _heater_button      _dig_readings [2] // assign HEATER  button to DIG 3
+
+// input debouncers for dashboard buttons
+etl::debounce <DEBOUNCE_VALID,DEBOUNCE_HOLD> _debouncers [3];
+#define _ac_button_debouncer        _debouncers [0]
+#define _auto_button_debouncer      _debouncers [1]
+#define _heater_button_debouncer    _debouncers [2]
+
+// keep track of the heater's state
+bool _heater_on = false;
 
 // state instances and state list containing every state
 sIdle      _sIdle;
@@ -96,14 +124,17 @@ sAuto      _sAuto;
 sCharging  _sCharging;
 sTempFault _sTempFault;
 
-etl::ifsm_state* stateList [StateID::N_STATES] = {
+// list of all instances of states
+etl::ifsm_state* _stateList [StateID::N_STATES] = {
     &_sIdle, &_sON, &_sAuto, &_sCharging, &_sTempFault
 };
 
-CCFSM fsm;
+// fsm class object
+CCFSM _fsm;
 
 //----------------------------      FUNCTION DECLARATIONS   ----------------------------//
 
+// SETUP / INIT
 void setupOnboardLED      ();
 void disableUnusedPins    ();
 void setupSensors         ();
@@ -111,22 +142,33 @@ void setupTempSensors     ();
 void setupCAN             ();
 void setupPWM             ();
 void setupPollingTimers   (); 
-void initTempRanges       ();
 
+// FSM
+void handleFSMButtonEvents ();
+
+void toggleHeater ();
+void setHeater    ( const bool& state );
+
+// INPUT POLLING
 void pollTempSensorsISR   ();
 void pollSensorsISR       ();
 
+// HANDLERS
+void handlDebouncers          ();
 void handlePollingMethods     ();
 void handleSensorPolling      ();
 void handleTempSensorPolling  ();
 
+// POLLING FNs
 void pollTempSensors    ();
 void pollDigitalInputs  ();
 void pollAnalogueInputs ();
 
+// PWM
 void setSIGPWM ( const uint8_t& pin, const float& freq, const float& duty );
 void setPWRPWM ( const uint8_t& pin, const float& freq, const float& duty );
 
+// SERIAL 
 void serialDisplayInit ();
 void serialDisplayConfigStatus ( int len, bool* flags );
 void serialDisplay     ();
@@ -136,10 +178,6 @@ void serialDisplay     ();
 //----------------------------      PROGRAM SETUP   ----------------------------//
 
 void setup() {
-
-    /// @todo remove and assign memory at compile time
-    // assign non I/O globals
-    initTempRanges ();
 
     // disable all pins that aren't being used and configure onboard LED
     disableUnusedPins ();
@@ -175,8 +213,8 @@ void setup() {
     }
 
     // FSM
-    fsm.set_states ( stateList, StateID::N_STATES );
-    fsm.start ();
+    _fsm.set_states ( _stateList, StateID::N_STATES );
+    _fsm.start ();
 
 }// setup ()
 
@@ -191,19 +229,18 @@ void loop() {
     // calls polling methods as required by the flags
     handlePollingMethods ();
 
-    // SERIAL DISPLAY
-    if ( ENABLE_SERIAL_OUTPUT ) {
+#if ENABLE_SERIAL_OUTPUT
 
-        // serial display
-        if ( cur_millis >= _next_serial_display_time_ms ) {
-            
-            // update next display time
-            _next_serial_display_time_ms = cur_millis + _serial_display_delay_ms;
-            
-            // display serial message
-            serialDisplay ();
-        }
+    // check if it is time to send serial display
+    if ( cur_millis >= _next_serial_display_time_ms ) {
+
+        // update next display time
+        _next_serial_display_time_ms = cur_millis + _serial_display_delay_ms;
+        
+        // display serial message
+        serialDisplay ();
     }
+#endif
 }// loop ()
 
 //----------------------------   [   FUNCTION DEFINITIONS    ]   ----------------------------//
@@ -364,44 +401,86 @@ void setupPollingTimers ()
 
 }// startPollingISRs ()
 
+
+//---------------------------   [       FSM        ]  ----------------------------------//
+
 /**
- * @fn initTempRanges ()
- * @brief instantiates structs representing temperature ranges using configured variables
+ * @fn handleFSMButtonEvents
+ * @brief capture the rising signals from the button debouncers and send the appropriate events to the FSM
 */
-void initTempRanges ()
+void handleFSMButtonEvents ()
+{   
+    // AC button event
+    if ( _ac_button_debouncer.has_changed () && ! _ac_button_debouncer.is_set () )
+    {
+        _fsm.receive ( eBTN_AC () );
+    }
+
+    // AUTO button event
+    if ( _auto_button_debouncer.has_changed () && ! _auto_button_debouncer.is_set () )
+    {
+        _fsm.receive ( eBTN_AUTO () );
+    }
+
+    // HEATER button event
+    if ( _heater_button_debouncer.has_changed () && ! _heater_button_debouncer.is_set () )
+    {
+        _fsm.receive ( eBTN_HEATER () );
+    }
+}// handleFSMButtonEvents ()
+
+
+/**
+ * @fn toggleHeater 
+ * @brief toggle the heater state
+*/
+void toggleHeater ()
 {
-    _temp_range_batt = new TempRange ( 
-        SAFETY_TEMP_BATT_MIN_OK,
-        SAFETY_TEMP_BATT_MAX_OK,
-        SAFETY_TEMP_BATT_MIN_CRIT,
-        SAFETY_TEMP_BATT_MAX_CRIT
-    );
+    _heater_on = !_heater_on;
+    setHeater ( _heater_on );
+}
 
-    _temp_range_chgr = new TempRange ( 
-        SAFETY_TEMP_CHGR_MIN_OK,
-        SAFETY_TEMP_CHGR_MAX_OK,
-        SAFETY_TEMP_CHGR_MIN_CRIT,
-        SAFETY_TEMP_CHGR_MAX_CRIT
-    );
+void setHeater ( const bool& state )
+{
+    if ( state )
+    {
+        // TURN ON
+        digitalWrite ( PINS_DIG_OUT [2], HIGH );
+        digitalWrite ( PINS_RELAY [0], HIGH );
+    }
+    else 
+    {
+        // TURN OFF
+        digitalWrite ( PINS_DIG_OUT [2], LOW );
+        digitalWrite ( PINS_RELAY [0], LOW );
+    }
 
-    _temp_range_batt = new TempRange ( 
-        SAFETY_TEMP_RES_MIN_OK,
-        SAFETY_TEMP_RES_MAX_OK,
-        SAFETY_TEMP_RES_MIN_CRIT,
-        SAFETY_TEMP_RES_MAX_CRIT
-    );
-}// initTempRanges ()
+    _heater_on = state;
+}
+
 
 //---------------------------   [   POLLING ISRs   ]  ----------------------------------//
 
 
 // Interval timers only need to set a flag
-void pollTempSensorsISR () { _flag_poll_thermistor = true; }
-void pollSensorsISR ()     { _flag_poll_snsr       = true; }
+void pollTempSensorsISR ()   { _flag_poll_thermistor = true; }
+void pollSensorsISR     ()   { _flag_poll_snsr       = true; }
 
 
 //---------------------------   [   POLL FN HANDLERS   ]  ----------------------------------//
 
+
+/**
+ * @fn handlDebouncers
+ * @brief handle state of etl::debounce<> objects for inputs desegnated as input buttons
+*/
+void handleDebouncers () 
+{
+    // add signals
+    _ac_button_debouncer.add        (     (_ac_button == 1) );
+    _auto_button_debouncer.add      (   (_auto_button == 1) );
+    _heater_button_debouncer.add    ( (_heater_button == 1) );
+}
 
 /**
  * @fn handlePollingMethods
@@ -474,9 +553,15 @@ void handleTempSensorPolling ()
 */
 void handleSensorPolling () 
 { 
+    // poll sensors
     pollDigitalInputs ();
     pollAnalogueInputs ();
-}
+
+    // send button inputs to debouncers with same frequency as polling 
+    handleDebouncers ();
+    // handle events based on debouncers with same frequency to avoid duplicate events
+    handleFSMButtonEvents ();
+}// handleSensorPolling ()
 
 
 //---------------------------   [   POLL FNs   ]  ----------------------------------//
@@ -657,7 +742,7 @@ void serialDisplayInit ()
 
     // digital input configuration
     Serial.println ( "DIGITAL INPUT CONFIGURATION:" );
-    serialDisplayConfigStatus ( N_DIG_IN, FLAG_THERMISTOR_POPULATED );
+    serialDisplayConfigStatus ( N_DIG_IN, FLAG_DIG_IN_POPULATED );
 
     // analogue input configuration
     Serial.println ( "ANALOGUE INPUT CONFIGURATION:" );

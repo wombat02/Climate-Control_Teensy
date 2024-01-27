@@ -4,6 +4,9 @@
 #include <etl/fsm.h>
 #include "pins.h"
 
+extern void toggleHeater ();
+extern void setHeater ( const bool& state );
+
 extern const etl::message_router_id_t FSM_ROUTER = 0;
 extern char* _serial_msg_bfr;
 
@@ -177,10 +180,14 @@ class sON : public etl::fsm_state <CCFSM, sON, StateID::ON,
 {
 public:
 
+    // **************    on_enter/exit   ********************* 
     etl::fsm_state_id_t on_enter_state ()
     {
         sprintf ( _serial_msg_bfr, "[%s] ENTER", stateIDStrings [STATE_ID] );
         Serial.println ( _serial_msg_bfr );
+
+        // turn on button led
+        digitalWrite ( PINS_DIG_OUT [0], HIGH );
 
         return No_State_Change;
     }
@@ -189,6 +196,23 @@ public:
     {
         sprintf ( _serial_msg_bfr, "[%s] EXIT", stateIDStrings [STATE_ID] );
         Serial.println ( _serial_msg_bfr );
+
+        // turn off climate control components
+        digitalWrite ( PINS_DIG_OUT [0], LOW ); // ac button light
+        digitalWrite ( PINS_DIG_OUT [2], LOW ); // heater button light
+
+        // turn off heater
+        setHeater ( false );
+    }
+    // **************    on_enter/exit   ********************* 
+
+    /**
+     * @fn on_event_unknown
+    */
+    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
+    {
+        get_fsm_context ().LogUnkownEvent ( msg );
+        return No_State_Change;
     }
 
     etl::fsm_state_id_t on_event ( const eBTN_AC& e )
@@ -205,8 +229,10 @@ public:
 
     etl::fsm_state_id_t on_event ( const eBTN_HEATER& e )
     {
-        // TURN ON HEATER
-        return STATE_ID;
+        // TOGGLE HEATER
+        toggleHeater ();
+
+        return No_State_Change;
     }
 
     etl::fsm_state_id_t on_event ( const eCHG_ON& e )
@@ -220,12 +246,6 @@ public:
         // ON -> TEMP FLT
         return StateID::TEMP_FAULT;
     }
-    
-    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
-    {
-        get_fsm_context ().LogUnkownEvent ( msg );
-        return STATE_ID;
-    }
 };
 
 // -------------------------------------     [ sAuto ]     --------------------------------------------------- //
@@ -238,30 +258,47 @@ class sAuto : public etl::fsm_state <CCFSM, sAuto, StateID::AUTO,
 {
 public:
 
+    // **************    on_enter/exit   ********************* 
     etl::fsm_state_id_t on_enter_state ()
     {
         sprintf ( _serial_msg_bfr, "[%s] ENTER", stateIDStrings [STATE_ID] );
         Serial.println ( _serial_msg_bfr );
+
+        // turn on button led
+        digitalWrite ( PINS_DIG_OUT [1], HIGH );
 
         return No_State_Change;
     }
 
     void on_exit_state ()
     {
+        // turn off button LED
+        digitalWrite ( PINS_DIG_OUT [1], LOW );
+
         sprintf ( _serial_msg_bfr, "[%s] EXIT", stateIDStrings [STATE_ID] );
         Serial.println ( _serial_msg_bfr );
+    }
+    // **************    on_enter/exit   ********************* 
+
+    /**
+     * @fn on_event_unknown
+    */
+    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
+    {
+        get_fsm_context ().LogUnkownEvent ( msg );
+        return STATE_ID;
     }
 
     etl::fsm_state_id_t on_event ( const eBTN_AUTO& e )
     {
-        // AUTO -> ON
-        return StateID::ON;
+        // AUTO -> IDLE
+        return StateID::IDLE;
     }
 
     etl::fsm_state_id_t on_event ( const eBTN_AC& e )
     {
-        // AUTO -> IDLE
-        return StateID::IDLE;
+        // AUTO -> ON
+        return StateID::ON;
     }
 
     etl::fsm_state_id_t on_event ( const eCHG_ON& e )
@@ -275,12 +312,6 @@ public:
         // AUTO -> TEMP FLT
         return StateID::TEMP_FAULT;
     }
-    
-    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
-    {
-        get_fsm_context ().LogUnkownEvent ( msg );
-        return STATE_ID;
-    }
 };
 
 // -------------------------------------     [ sCharging ]     --------------------------------------------------- //
@@ -291,6 +322,7 @@ class sCharging : public etl::fsm_state <CCFSM, sCharging, StateID::CHARGING,
 {
 public:
 
+    // **************    on_enter/exit   ********************* 
     etl::fsm_state_id_t on_enter_state ()
     {
         sprintf ( _serial_msg_bfr, "[%s] ENTER", stateIDStrings [STATE_ID] );
@@ -303,6 +335,16 @@ public:
     {
         sprintf ( _serial_msg_bfr, "[%s] EXIT", stateIDStrings [STATE_ID] );
         Serial.println ( _serial_msg_bfr );
+    }
+    // **************    on_enter/exit   ********************* 
+
+    /**
+     * @fn on_event_unknown
+    */
+    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
+    {
+        get_fsm_context ().LogUnkownEvent ( msg );
+        return STATE_ID;
     }
     
     etl::fsm_state_id_t on_event ( const eCHG_OFF& e )
@@ -315,12 +357,6 @@ public:
     {
         return StateID::TEMP_FAULT;
     }
-
-    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
-    {
-        get_fsm_context ().LogUnkownEvent ( msg );
-        return STATE_ID;
-    }
 };
 
 // -------------------------------------     [ sTempFault ]     --------------------------------------------------- //
@@ -330,6 +366,7 @@ class sTempFault : public etl::fsm_state <CCFSM, sTempFault, StateID::TEMP_FAULT
 {
 public:
 
+    // **************    on_enter/exit   ********************* 
     etl::fsm_state_id_t on_enter_state ()
     {
         sprintf ( _serial_msg_bfr, "[%s] ENTER", stateIDStrings [STATE_ID] );
@@ -343,18 +380,22 @@ public:
         sprintf ( _serial_msg_bfr, "[%s] EXIT", stateIDStrings [STATE_ID] );
         Serial.println ( _serial_msg_bfr );
     }
+    // **************    on_enter/exit   ********************* 
+
+    /**
+     * @fn on_event_unknown
+    */
+    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
+    {
+        get_fsm_context ().LogUnkownEvent ( msg );
+        return STATE_ID;
+    }
     
     /// @todo internal logic to get out of temp fault state
     
     etl::fsm_state_id_t on_event ( const eUPDATE& e )
     {
         return No_State_Change;
-    }
-    
-    etl::fsm_state_id_t on_event_unknown ( const etl::imessage& msg )
-    {
-        get_fsm_context ().LogUnkownEvent ( msg );
-        return STATE_ID;
     }
 };
 

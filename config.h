@@ -70,10 +70,10 @@
 #define THERMISTOR_READING_BUFFER_SIZE 20       
 
 // frequency to take readings of temperature sensors
-#define THERMISTOR_POLL_FREQ 60 // Hz
+#define THERMISTOR_POLL_FREQ 100 // Hz
 
 // frequency to poll digital and analogue inputs
-#define SNSR_POLLING_FREQ 20 // Hz
+#define SNSR_POLLING_FREQ 75 // Hz
 
 //------------------------      THERMISTOR INPUT SAFETY CONFIGURATION     --------------------------//
 
@@ -101,15 +101,14 @@ bool FLAG_THERMISTOR_POPULATED [N_THERMISTOR] = {
 
 //------------------------      INPUT / OUTPUT PIN ASSIGNMENT     --------------------------//
 
-
 /** 
  * @warning Flags must be configured or inputs will be disabled
 */
 bool FLAG_DIG_IN_POPULATED [N_DIG_IN] = { 
-    false,  // DIG 1
-    false,  // DIG 2
-    false,  // DIG 3
-    false,  // DIG 4
+    true,  // DIG 1
+    true,  // DIG 2
+    true,  // DIG 3
+    true,  // DIG 4
     false,  // DIG 5
     false,  // DIG 6
     false,  // DIG 7
@@ -135,7 +134,6 @@ bool FLAG_CAN_POPULATED [N_CAN] = {
     false   // CAN 3
 };
 
-
 //------------------------      PWM    --------------------------//
 
 // pwm will default to 1 kHz
@@ -149,6 +147,12 @@ bool FLAG_CAN_POPULATED [N_CAN] = {
 #define INVERT_SIG_PWM true
 
 //------------------------      MISC SETTINGS   --------------------------//
+
+
+// tune this in accordance to SNSR_POLLING_FREQ 
+// See https://www.etlcpp.com/debounce.html for details
+#define DEBOUNCE_VALID 5
+#define DEBOUNCE_HOLD 5
 
 /// @brief set the LED to be always on
 #define ONBOARD_LED_ENABLE_STATIC true
